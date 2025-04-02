@@ -1,0 +1,29 @@
+{
+  "name": "deposit-monitor",
+  "version": "3.0.0",
+  "description": "Multi-chain deposit monitor and balance scanner for Ethereum, BSC, and Solana",
+  "main": "monitor.js",
+  "scripts": {
+    "start": "node monitor.js",
+    "scan": "node enhanced-balance-scanner.js",
+    "schedule": "node scheduled-balance-checker.js"
+  },
+  "keywords": [
+    "ethereum",
+    "web3",
+    "deposit",
+    "monitor",
+    "blockchain"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@solana/spl-token": "^0.3.11",
+    "@solana/web3.js": "^1.91.1",
+    "firebase-admin": "^11.11.1",
+    "web3": "^4.5.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
