@@ -8,6 +8,11 @@ const { TOKEN_PROGRAM_ID, AccountLayout } = require('@solana/spl-token');
 // Process command line arguments
 const args = process.argv.slice(2);
 const chainArg = args.find(arg => arg.startsWith('--chain='));
+const oneTimeArg = args.find(arg => arg === '--one-time');
+
+// Should this be a one-time scan (used by the web interface)
+const isOneTimeScan = !!oneTimeArg;
+
 const chainsToScan = chainArg ? 
     chainArg.replace('--chain=', '').toLowerCase().split(',') : 
     ['ethereum', 'bsc', 'solana'];
@@ -134,7 +139,7 @@ const config = {
     minReportBalance: 0.0001,
     
     // Scan interval in milliseconds
-    scanInterval: 5 * 60 * 1000 // 5 minutes in milliseconds
+    scanInterval: 10 * 60 * 1000 // 10 minutes in milliseconds
 };
 
 // Initialize Web3 instances
@@ -255,65 +260,164 @@ function isValidSolanaAddress(address) {
 
 // Function to fetch all wallet addresses from Firebase
 async function fetchAllWalletAddresses() {
-    const addresses = {
-        ethereum: [],
-        bsc: [],
-        solana: []
+    // Default return structure
+    const result = {
+        addresses: {
+            ethereum: [],
+            bsc: [],
+            solana: []
+        },
+        userMap: {},
+        emailMap: {}
     };
-    const userMap = {};
-
+    
+    if (!config.saveToFirebase) {
+        console.log('Firebase integration is disabled. Returning empty address list.');
+        return result;
+    }
+    
     try {
         console.log('Fetching wallet addresses from Firebase...');
-        const walletAddressesRef = db.collection('walletAddresses');
-        const walletSnapshot = await walletAddressesRef.get();
+        let walletCount = 0;
         
-        if (!walletSnapshot.empty) {
-            console.log(`Found ${walletSnapshot.size} wallet documents in Firebase`);
+        // First look in walletAddresses collection (preferred)
+        console.log('Checking walletAddresses collection...');
+        const walletAddressesSnapshot = await db.collection('walletAddresses').get();
+        
+        if (!walletAddressesSnapshot.empty) {
+            console.log(`Found ${walletAddressesSnapshot.size} wallet documents`);
             
-            walletSnapshot.forEach(doc => {
+            for (const doc of walletAddressesSnapshot.docs) {
                 const userId = doc.id;
                 const walletData = doc.data();
                 
+                // Try to get user email
+                try {
+                    const userDoc = await db.collection('users').doc(userId).get();
+                    if (userDoc.exists) {
+                        const userData = userDoc.data();
+                        const email = userData.email || userData.emailAddress || userData.userEmail;
+                        if (email) {
+                            result.emailMap[userId] = email;
+                            console.log(`Found email for user ${userId}: ${email}`);
+                        } else {
+                            result.emailMap[userId] = `No email found for ${userId}`;
+                            console.log(`No email found for user ${userId}`);
+                        }
+                    }
+                } catch (emailError) {
+                    console.warn(`Error fetching email for user ${userId}: ${emailError.message}`);
+                    result.emailMap[userId] = `No email found`;
+                }
+                
+                // Process wallets structure if available
                 if (walletData && walletData.wallets) {
-                    // Extract Ethereum address
+                    // Ethereum/BSC wallet addresses
                     if (walletData.wallets.ethereum) {
                         const ethAddress = walletData.wallets.ethereum.toLowerCase();
-                        addresses.ethereum.push(ethAddress);
-                        userMap[ethAddress] = userId;
+                        result.addresses.ethereum.push(ethAddress);
+                        result.userMap[ethAddress] = userId;
+                        walletCount++;
                     }
                     
-                    // Extract BSC address
+                    // BSC wallet addresses
                     if (walletData.wallets.bsc) {
                         const bscAddress = walletData.wallets.bsc.toLowerCase();
-                        addresses.bsc.push(bscAddress);
-                        userMap[bscAddress] = userId;
+                        result.addresses.bsc.push(bscAddress);
+                        result.userMap[bscAddress] = userId;
+                        walletCount++;
                     }
                     
-                    // Extract Solana address with validation
+                    // Solana wallet addresses
                     if (walletData.wallets.solana) {
                         const solanaAddress = walletData.wallets.solana;
                         if (isValidSolanaAddress(solanaAddress)) {
-                            addresses.solana.push(solanaAddress);
-                            userMap[solanaAddress] = userId;
+                            result.addresses.solana.push(solanaAddress);
+                            result.userMap[solanaAddress] = userId;
+                            walletCount++;
                         } else {
-                            console.warn(`Invalid Solana address for user ${userId}: ${solanaAddress} - Skipping this address`);
+                            console.warn(`Skipping invalid Solana address for user ${userId}: ${solanaAddress}`);
                         }
                     }
                 }
-            });
+            }
         } else {
-            console.log('No wallet addresses found in Firebase');
+            console.log('No documents found in walletAddresses collection');
         }
         
-        return { addresses, userMap };
+        // If no wallets found in walletAddresses collection, try users collection
+        if (walletCount === 0) {
+            console.log('No wallets found in walletAddresses collection, checking users collection...');
+            const usersSnapshot = await db.collection('users').get();
+            
+            if (!usersSnapshot.empty) {
+                console.log(`Found ${usersSnapshot.size} user documents`);
+                
+                for (const doc of usersSnapshot.docs) {
+                    const userId = doc.id;
+                    const userData = doc.data();
+                    
+                    // Save email info
+                    const email = userData.email || userData.emailAddress || userData.userEmail;
+                    if (email) {
+                        result.emailMap[userId] = email;
+                    } else {
+                        result.emailMap[userId] = `No email found for ${userId}`;
+                    }
+                    
+                    // Process wallets if available
+                    if (userData.wallets) {
+                        // Ethereum/BSC wallet addresses
+                        if (userData.wallets.ethereum) {
+                            const ethAddress = userData.wallets.ethereum.toLowerCase();
+                            result.addresses.ethereum.push(ethAddress);
+                            result.userMap[ethAddress] = userId;
+                            walletCount++;
+                        }
+                        
+                        // BSC wallet addresses
+                        if (userData.wallets.bsc) {
+                            const bscAddress = userData.wallets.bsc.toLowerCase();
+                            result.addresses.bsc.push(bscAddress);
+                            result.userMap[bscAddress] = userId;
+                            walletCount++;
+                        }
+                        
+                        // Solana wallet addresses
+                        if (userData.wallets.solana) {
+                            const solanaAddress = userData.wallets.solana;
+                            if (isValidSolanaAddress(solanaAddress)) {
+                                result.addresses.solana.push(solanaAddress);
+                                result.userMap[solanaAddress] = userId;
+                                walletCount++;
+                            } else {
+                                console.warn(`Skipping invalid Solana address for user ${userId}: ${solanaAddress}`);
+                            }
+                        }
+                    }
+                }
+            } else {
+                console.log('No documents found in users collection');
+            }
+        }
         
+        // Deduplicate addresses
+        result.addresses.ethereum = [...new Set(result.addresses.ethereum)];
+        result.addresses.bsc = [...new Set(result.addresses.bsc)];
+        result.addresses.solana = [...new Set(result.addresses.solana)];
+        
+        // Log results
+        console.log(`Found ${result.addresses.ethereum.length} Ethereum addresses, ${result.addresses.bsc.length} BSC addresses, and ${result.addresses.solana.length} Solana addresses`);
+        console.log(`Found email information for ${Object.keys(result.emailMap).length} users`);
+        
+        return result;
     } catch (error) {
-        console.error('Error fetching wallet addresses from Firebase:', error);
-        return { addresses, userMap };
+        console.error('Error fetching wallet addresses:', error);
+        return result;
     }
 }
 
-// Function to update user's balances in Firestore
+// Function to update user's balances in Firestore and track deposits
 async function updateUserBalances(userId, chain, symbol, balance) {
     if (!config.saveToFirebase || !userId || userId === 'Unknown') return;
     
@@ -348,7 +452,9 @@ async function updateUserBalances(userId, chain, symbol, balance) {
             // Only update if the balance has changed beyond a small rounding threshold
             // This prevents unnecessary updates due to small precision differences
             const threshold = 0.000001;
-            if (Math.abs(currentValue - balance) > threshold) {
+            const balanceDifference = balance - currentValue;
+            
+            if (Math.abs(balanceDifference) > threshold) {
                 // Update using the existing key if found, otherwise use the symbol as is
                 const updateKey = existingKey || tokenSymbol;
                 const updateData = {};
@@ -356,6 +462,11 @@ async function updateUserBalances(userId, chain, symbol, balance) {
                 
                 await userDocRef.update(updateData);
                 console.log(`Updated ${userId}'s ${updateKey} balance from ${currentValue} to ${balance}`);
+                
+                // If balance increased, track it as a deposit
+                if (balanceDifference > threshold) {
+                    await trackBalanceIncreaseAsDeposit(userId, chain, symbol, currentValue, balance, balanceDifference);
+                }
             } else {
                 console.log(`No change in ${userId}'s ${existingKey || tokenSymbol} balance (${balance})`);
             }
@@ -367,8 +478,63 @@ async function updateUserBalances(userId, chain, symbol, balance) {
     }
 }
 
+// Function to track a balance increase as a deposit
+async function trackBalanceIncreaseAsDeposit(userId, chain, symbol, previousBalance, newBalance, amount) {
+    try {
+        // Get user email for better identification in logs
+        let userEmail = 'Unknown';
+        
+        try {
+            const userDoc = await db.collection('users').doc(userId).get();
+            if (userDoc.exists) {
+                const userData = userDoc.data();
+                userEmail = userData.email || userData.emailAddress || userData.userEmail || 'No email found';
+                console.log(`Found user email for ${userId}: ${userEmail}`);
+            } else {
+                console.log(`User document ${userId} not found, cannot retrieve email`);
+                userEmail = `No email found for ${userId}`;
+            }
+        } catch (emailError) {
+            console.error(`Error retrieving user email:`, emailError);
+            userEmail = `Error retrieving email: ${emailError.message}`;
+        }
+        
+        // Format the deposit record
+        const deposit = {
+            userId,
+            userEmail,
+            chain,
+            symbol: symbol.toUpperCase(),
+            previousBalance,
+            newBalance,
+            amount,
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            processed: false
+        };
+        
+        // Save to processed deposits collection
+        const depositRef = await db.collection('processedDeposits').add(deposit);
+        console.log(`Deposit record created with ID: ${depositRef.id}`);
+        
+        // Log the deposit
+        console.log('\n===== BALANCE INCREASE DETECTED =====');
+        console.log(`User: ${userId} (${userEmail})`);
+        console.log(`Chain: ${chain}`);
+        console.log(`Token: ${symbol.toUpperCase()}`);
+        console.log(`Previous Balance: ${previousBalance}`);
+        console.log(`New Balance: ${newBalance}`);
+        console.log(`Increase Amount: ${amount}`);
+        console.log('======================================\n');
+        
+        return depositRef.id;
+    } catch (error) {
+        console.error('Error tracking balance increase as deposit:', error);
+        return null;
+    }
+}
+
 // Function to process a batch of wallets
-async function processBatch(addresses, chain, web3Instance, userMap, startIndex, batchSize) {
+async function processBatch(addresses, chain, web3Instance, userMap, emailMap, startIndex, batchSize) {
     const results = {};
     const endIndex = Math.min(startIndex + batchSize, addresses.length);
     
@@ -377,6 +543,29 @@ async function processBatch(addresses, chain, web3Instance, userMap, startIndex,
     for (let i = startIndex; i < endIndex; i++) {
         const address = addresses[i];
         const userId = userMap[address] || 'Unknown';
+        
+        // Get user email with better error handling
+        let userEmail = 'No email found';
+        if (userId !== 'Unknown') {
+            if (emailMap && emailMap[userId]) {
+                userEmail = emailMap[userId];
+            } else {
+                // Try to fetch email directly if not in map
+                try {
+                    const userDoc = await db.collection('users').doc(userId).get();
+                    if (userDoc.exists) {
+                        const userData = userDoc.data();
+                        userEmail = userData.email || userData.emailAddress || userData.userEmail || 'No email found';
+                        // Update email map for future use
+                        if (emailMap) emailMap[userId] = userEmail;
+                    }
+                } catch (emailError) {
+                    console.warn(`Could not fetch email for user ${userId}: ${emailError.message}`);
+                }
+            }
+        }
+        
+        console.log(`Processing ${chain} address: ${address} for user ${userId} (${userEmail})`);
         
         // Get native token balance
         let nativeBalance = 0;
@@ -457,6 +646,7 @@ async function processBatch(addresses, chain, web3Instance, userMap, startIndex,
         
         results[address] = {
             userId,
+            userEmail,
             nativeBalance,
             tokens: tokenBalances,
             totalValueUSD: 0 // We'll add this later if price API is integrated
@@ -466,38 +656,105 @@ async function processBatch(addresses, chain, web3Instance, userMap, startIndex,
     return results;
 }
 
-// Save results to Firebase
+// Function to save balances to Firebase
 async function saveBalancesToFirebase(ethereumBalances, bscBalances, solanaBalances) {
-    if (!config.saveToFirebase) return;
+    if (!config.saveToFirebase) {
+        console.log('Firebase integration is disabled. Not saving to Firebase.');
+        return false;
+    }
     
     try {
-        const scanTime = admin.firestore.Timestamp.now();
-        const batch = db.batch();
-        const collectionRef = db.collection(config.balancesCollection);
+        console.log('Saving balance results to Firebase...');
         
-        // Create a single document with the scan results
-        const docRef = collectionRef.doc(scanTime.toDate().toISOString().replace(/[:.]/g, '-'));
+        // Save to walletBalances collection in a single document
+        const timestamp = new Date();
+        const formattedDate = timestamp.toISOString().split('T')[0]; // YYYY-MM-DD format
         
-        batch.set(docRef, {
-            scanTime: scanTime,
-            ethereumBalances,
-            bscBalances,
-            solanaBalances,
-            summary: {
-                ethereumAddressCount: Object.keys(ethereumBalances).length,
-                bscAddressCount: Object.keys(bscBalances).length,
-                solanaAddressCount: Object.keys(solanaBalances).length,
-                nonZeroEthereumCount: Object.values(ethereumBalances).filter(data => data.nativeBalance > 0).length,
-                nonZeroBscCount: Object.values(bscBalances).filter(data => data.nativeBalance > 0).length,
-                nonZeroSolanaCount: Object.values(solanaBalances).filter(data => data.nativeBalance > 0).length
+        // Format balances with proper user email info
+        const formattedEthereumBalances = {};
+        for (const [address, data] of Object.entries(ethereumBalances)) {
+            formattedEthereumBalances[address] = {
+                ...data,
+                lastUpdated: timestamp
+            };
+        }
+        
+        const formattedBscBalances = {};
+        for (const [address, data] of Object.entries(bscBalances)) {
+            formattedBscBalances[address] = {
+                ...data,
+                lastUpdated: timestamp
+            };
+        }
+        
+        const formattedSolanaBalances = {};
+        for (const [address, data] of Object.entries(solanaBalances)) {
+            formattedSolanaBalances[address] = {
+                ...data,
+                lastUpdated: timestamp
+            };
+        }
+        
+        // Try to get the current data first to preserve chain data that wasn't scanned
+        let existingData = {};
+        try {
+            const latestDoc = await db.collection('walletBalances').doc('latest').get();
+            if (latestDoc.exists) {
+                existingData = latestDoc.data() || {};
+                console.log('Retrieved existing balance data to preserve unscanned chains');
             }
-        });
+        } catch (readError) {
+            console.warn('Could not read existing balance data:', readError.message);
+        }
         
-        await batch.commit();
-        console.log(`Balance scan results saved to Firebase collection '${config.balancesCollection}'`);
+        // Create document structure that preserves existing data for chains not scanned
+        const balanceData = {
+            scanTimestamp: timestamp,
+            scanTime: timestamp.toISOString(),
+            chainsScanned: uniqueChains,
+            // Preserve existing data for chains not in uniqueChains
+            ethereumBalances: uniqueChains.includes('ethereum') 
+                ? formattedEthereumBalances 
+                : (existingData.ethereumBalances || {}),
+            bscBalances: uniqueChains.includes('bsc') 
+                ? formattedBscBalances 
+                : (existingData.bscBalances || {}),
+            solanaBalances: uniqueChains.includes('solana') 
+                ? formattedSolanaBalances 
+                : (existingData.solanaBalances || {}),
+            summary: {
+                ethereumAddressCount: uniqueChains.includes('ethereum') 
+                    ? Object.keys(formattedEthereumBalances).length 
+                    : (existingData.summary?.ethereumAddressCount || 0),
+                bscAddressCount: uniqueChains.includes('bsc') 
+                    ? Object.keys(formattedBscBalances).length 
+                    : (existingData.summary?.bscAddressCount || 0),
+                solanaAddressCount: uniqueChains.includes('solana') 
+                    ? Object.keys(formattedSolanaBalances).length 
+                    : (existingData.summary?.solanaAddressCount || 0),
+                nonZeroEthereumCount: uniqueChains.includes('ethereum') 
+                    ? Object.values(formattedEthereumBalances).filter(data => data.nativeBalance > 0).length 
+                    : (existingData.summary?.nonZeroEthereumCount || 0),
+                nonZeroBscCount: uniqueChains.includes('bsc') 
+                    ? Object.values(formattedBscBalances).filter(data => data.nativeBalance > 0).length 
+                    : (existingData.summary?.nonZeroBscCount || 0),
+                nonZeroSolanaCount: uniqueChains.includes('solana') 
+                    ? Object.values(formattedSolanaBalances).filter(data => data.nativeBalance > 0).length 
+                    : (existingData.summary?.nonZeroSolanaCount || 0)
+            }
+        };
         
+        // Save to a fixed document in walletBalances collection
+        await db.collection('walletBalances').doc('latest').set(balanceData);
+        
+        // Also save to a dated document for historical records
+        await db.collection('walletBalances').doc(`scan_${formattedDate}_${Date.now()}`).set(balanceData);
+        
+        console.log('Balance data saved to Firebase successfully');
+        return true;
     } catch (error) {
         console.error('Error saving balances to Firebase:', error);
+        return false;
     }
 }
 
@@ -511,7 +768,7 @@ async function scanWalletBalances() {
     
     try {
         // Fetch wallet addresses from Firebase
-        const { addresses, userMap } = await fetchAllWalletAddresses();
+        const { addresses, userMap, emailMap } = await fetchAllWalletAddresses();
         
         let noAddressesToScan = true;
         uniqueChains.forEach(chain => {
@@ -543,6 +800,7 @@ async function scanWalletBalances() {
                     'Ethereum',
                     ethereumWeb3,
                     userMap,
+                    emailMap,
                     i,
                     config.batchSize
                 );
@@ -562,6 +820,7 @@ async function scanWalletBalances() {
                     'BSC',
                     bscWeb3,
                     userMap,
+                    emailMap,
                     i,
                     config.batchSize
                 );
@@ -581,6 +840,7 @@ async function scanWalletBalances() {
                     'Solana',
                     null, // No web3 instance needed for Solana
                     userMap,
+                    emailMap,
                     i,
                     config.batchSize
                 );
@@ -588,27 +848,56 @@ async function scanWalletBalances() {
             }
         }
         
-        // Save results to file
+        // Try to read existing data from file
+        let existingReport = {};
+        try {
+            if (fs.existsSync(config.outputFile)) {
+                const existingData = fs.readFileSync(config.outputFile, 'utf8');
+                existingReport = JSON.parse(existingData);
+                console.log(`Read existing data from ${config.outputFile} to preserve unscanned chain data`);
+            }
+        } catch (readError) {
+            console.warn(`Could not read existing data from ${config.outputFile}:`, readError.message);
+        }
+        
+        // Prepare report, preserving data for chains that weren't scanned
         const report = {
             scanTime: new Date().toISOString(),
             chainsScanned: uniqueChains,
-            ethereumBalances: uniqueChains.includes('ethereum') ? ethereumBalances : {},
-            bscBalances: uniqueChains.includes('bsc') ? bscBalances : {},
-            solanaBalances: uniqueChains.includes('solana') ? solanaBalances : {},
+            ethereumBalances: uniqueChains.includes('ethereum') 
+                ? ethereumBalances 
+                : (existingReport.ethereumBalances || {}),
+            bscBalances: uniqueChains.includes('bsc') 
+                ? bscBalances 
+                : (existingReport.bscBalances || {}),
+            solanaBalances: uniqueChains.includes('solana') 
+                ? solanaBalances 
+                : (existingReport.solanaBalances || {}),
             summary: {
-                ethereumAddressCount: addresses.ethereum ? addresses.ethereum.length : 0,
-                bscAddressCount: addresses.bsc ? addresses.bsc.length : 0,
-                solanaAddressCount: addresses.solana ? addresses.solana.length : 0,
-                nonZeroEthereumCount: uniqueChains.includes('ethereum') ? 
-                    Object.values(ethereumBalances).filter(data => data.nativeBalance > 0).length : 0,
-                nonZeroBscCount: uniqueChains.includes('bsc') ? 
-                    Object.values(bscBalances).filter(data => data.nativeBalance > 0).length : 0,
-                nonZeroSolanaCount: uniqueChains.includes('solana') ? 
-                    Object.values(solanaBalances).filter(data => data.nativeBalance > 0).length : 0
+                ethereumAddressCount: uniqueChains.includes('ethereum') 
+                    ? (addresses.ethereum ? addresses.ethereum.length : 0)
+                    : (existingReport.summary?.ethereumAddressCount || 0),
+                bscAddressCount: uniqueChains.includes('bsc') 
+                    ? (addresses.bsc ? addresses.bsc.length : 0)
+                    : (existingReport.summary?.bscAddressCount || 0),
+                solanaAddressCount: uniqueChains.includes('solana') 
+                    ? (addresses.solana ? addresses.solana.length : 0)
+                    : (existingReport.summary?.solanaAddressCount || 0),
+                nonZeroEthereumCount: uniqueChains.includes('ethereum') 
+                    ? Object.values(ethereumBalances).filter(data => data.nativeBalance > 0).length
+                    : (existingReport.summary?.nonZeroEthereumCount || 0),
+                nonZeroBscCount: uniqueChains.includes('bsc') 
+                    ? Object.values(bscBalances).filter(data => data.nativeBalance > 0).length
+                    : (existingReport.summary?.nonZeroBscCount || 0),
+                nonZeroSolanaCount: uniqueChains.includes('solana') 
+                    ? Object.values(solanaBalances).filter(data => data.nativeBalance > 0).length
+                    : (existingReport.summary?.nonZeroSolanaCount || 0)
             }
         };
         
+        // Save to file
         fs.writeFileSync(config.outputFile, JSON.stringify(report, null, 2));
+        console.log(`Saved scan results to ${config.outputFile}`);
         
         // Save to Firebase
         if (config.saveToFirebase) {
@@ -748,11 +1037,26 @@ async function scanWalletBalances() {
         
     } catch (error) {
         console.error('Error scanning wallet balances:', error);
+        throw error; // Rethrow to handle in one-time mode
     }
 }
 
 // Function to start the periodic scanning
 function startPeriodicScanning() {
+    if (isOneTimeScan) {
+        console.log('Running in one-time scan mode');
+        scanWalletBalances()
+            .then(() => {
+                console.log('One-time scan completed');
+                process.exit(0);
+            })
+            .catch(err => {
+                console.error('Error during one-time scan:', err);
+                process.exit(1);
+            });
+        return;
+    }
+    
     console.log(`Starting periodic balance scanning every ${config.scanInterval / 60000} minutes`);
     
     // Run the first scan immediately

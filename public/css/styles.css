@@ -1,0 +1,130 @@
+/* General styling */
+body {
+    background-color: #f5f7fb;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.navbar-brand {
+    font-weight: 600;
+    letter-spacing: 1px;
+}
+
+.card {
+    border-radius: 10px;
+    border: none;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+    margin-bottom: 20px;
+}
+
+.card-header {
+    background-color: #fff;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+    font-weight: 600;
+}
+
+/* Dashboard cards */
+.card.bg-primary, .card.bg-warning, .card.bg-info {
+    transition: transform 0.3s;
+}
+
+.card.bg-primary:hover, .card.bg-warning:hover, .card.bg-info:hover {
+    transform: translateY(-5px);
+}
+
+.card.bg-primary .card-text, .card.bg-warning .card-text, .card.bg-info .card-text {
+    font-size: 28px;
+    font-weight: bold;
+}
+
+/* Table styling */
+.table th {
+    font-weight: 600;
+    color: #6c757d;
+}
+
+.table td {
+    vertical-align: middle;
+}
+
+/* Address style for better display */
+.address-cell {
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Button styling */
+.btn-primary {
+    background-color: #4e73df;
+    border-color: #4e73df;
+}
+
+.btn-primary:hover {
+    background-color: #2e59d9;
+    border-color: #2653d4;
+}
+
+.btn-success {
+    background-color: #1cc88a;
+    border-color: #1cc88a;
+}
+
+.btn-success:hover {
+    background-color: #17a673;
+    border-color: #169b6b;
+}
+
+/* Badges for chain types */
+.badge-eth {
+    background-color: #627eea;
+    color: white;
+}
+
+.badge-bsc {
+    background-color: #f3ba2f;
+    color: black;
+}
+
+.badge-sol {
+    background-color: #00ffbd;
+    color: black;
+}
+
+/* Loading spinner */
+.spinner-border {
+    width: 1.5rem;
+    height: 1.5rem;
+}
+
+/* Modal customization */
+.modal-content {
+    border-radius: 10px;
+    border: none;
+}
+
+.modal-header {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.modal-footer {
+    border-top: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+/* Progress bar styling */
+.progress {
+    height: 10px;
+    border-radius: 5px;
+}
+
+/* Responsiveness for smaller screens */
+@media (max-width: 768px) {
+    .card-header {
+        flex-direction: column;
+        align-items: flex-start !important;
+    }
+    
+    .card-header div {
+        margin-top: 10px;
+    }
+} 

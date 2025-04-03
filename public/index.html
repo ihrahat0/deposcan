@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DepoScan - Wallet Balance Scanner</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/moment@2.29.4/moment.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">DepoScan</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav">
+                    <li class="nav-item">
+                        <a class="nav-link active" aria-current="page" href="/">Dashboard</a>
+                    </li>
+                   
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5>Wallet Balance Scanner</h5>
+                        <div>
+                            <button id="refreshButton" class="btn btn-primary me-2">Refresh Data</button>
+                            <button id="scanNowButton" class="btn btn-success">Scan Now</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="row mb-4">
+                            <div class="col-md-4">
+                                <div class="card text-white bg-primary">
+                                    <div class="card-body">
+                                        <h5 class="card-title">Ethereum Wallets</h5>
+                                        <p class="card-text" id="ethWalletCount">0</p>
+                                        <p class="card-text small">Non-zero balances: <span id="ethNonZeroCount">0</span></p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="card text-white bg-warning">
+                                    <div class="card-body">
+                                        <h5 class="card-title">BSC Wallets</h5>
+                                        <p class="card-text" id="bscWalletCount">0</p>
+                                        <p class="card-text small">Non-zero balances: <span id="bscNonZeroCount">0</span></p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="card text-white bg-info">
+                                    <div class="card-body">
+                                        <h5 class="card-title">Solana Wallets</h5>
+                                        <p class="card-text" id="solWalletCount">0</p>
+                                        <p class="card-text small">Non-zero balances: <span id="solNonZeroCount">0</span></p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row mb-4">
+                            <div class="col-md-12">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h6>Latest Scan Results</h6>
+                                        <div class="form-check form-check-inline float-end">
+                                            <input class="form-check-input" type="radio" name="chainFilter" id="allChains" value="all" checked>
+                                            <label class="form-check-label" for="allChains">All</label>
+                                        </div>
+                                        <div class="form-check form-check-inline float-end">
+                                            <input class="form-check-input" type="radio" name="chainFilter" id="ethChain" value="ethereum">
+                                            <label class="form-check-label" for="ethChain">ETH</label>
+                                        </div>
+                                        <div class="form-check form-check-inline float-end">
+                                            <input class="form-check-input" type="radio" name="chainFilter" id="bscChain" value="bsc">
+                                            <label class="form-check-label" for="bscChain">BSC</label>
+                                        </div>
+                                        <div class="form-check form-check-inline float-end">
+                                            <input class="form-check-input" type="radio" name="chainFilter" id="solChain" value="solana">
+                                            <label class="form-check-label" for="solChain">SOL</label>
+                                        </div>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="table-responsive">
+                                            <table class="table table-hover" id="balanceTable">
+                                                <thead>
+                                                    <tr>
+                                                        <th>User Email</th>
+                                                        <th>Chain</th>
+                                                        <th>Address</th>
+                                                        <th>Balance</th>
+                                                        <th>Last Scanned</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody id="balanceTableBody">
+                                                    <!-- Data will be populated by JavaScript -->
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scan Modal -->
+    <div class="modal fade" id="scanModal" tabindex="-1" aria-labelledby="scanModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="scanModalLabel">Scan Wallets</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="scanForm">
+                        <div class="mb-3">
+                            <label class="form-label">Select Chain(s) to Scan</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" value="ethereum" id="scanEthereum" checked>
+                                <label class="form-check-label" for="scanEthereum">
+                                    Ethereum
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" value="bsc" id="scanBsc" checked>
+                                <label class="form-check-label" for="scanBsc">
+                                    BSC
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" value="solana" id="scanSolana" checked>
+                                <label class="form-check-label" for="scanSolana">
+                                    Solana
+                                </label>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="scanStatus" class="d-none">
+                        <div class="progress mb-3">
+                            <div id="scanProgress" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+                        </div>
+                        <div id="scanStatusMessage">Preparing scan...</div>
+                        <!-- Log container will be added dynamically -->
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" id="startScanButton">Start Scan</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html> 
