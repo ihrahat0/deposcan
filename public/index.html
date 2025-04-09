@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DepoScan - Wallet Balance Scanner</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
     <link rel="stylesheet" href="css/styles.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/moment@2.29.4/moment.min.js"></script>
@@ -18,12 +19,23 @@
                 <span class="navbar-toggler-icon"></span>
             </button>
             <div class="collapse navbar-collapse" id="navbarNav">
-                <ul class="navbar-nav">
+                <ul class="navbar-nav me-auto">
                     <li class="nav-item">
                         <a class="nav-link active" aria-current="page" href="/">Dashboard</a>
                     </li>
-                   
+                    <li class="nav-item">
+                        <a class="nav-link" href="/deposits.html">Deposit History</a>
+                    </li>
                 </ul>
+                <div class="d-flex align-items-center">
+                    <span class="text-light me-3">
+                        <i class="bi bi-person-circle"></i>
+                        <span id="userEmailDisplay">Loading...</span>
+                    </span>
+                    <button id="logoutButton" class="btn btn-outline-light btn-sm">
+                        <i class="bi bi-box-arrow-right"></i> Logout
+                    </button>
+                </div>
             </div>
         </div>
     </nav>
@@ -71,28 +83,35 @@
                         </div>
 
                         <div class="row mb-4">
-                            <div class="col-md-12">
+                            <div class="col">
                                 <div class="card">
-                                    <div class="card-header">
-                                        <h6>Latest Scan Results</h6>
-                                        <div class="form-check form-check-inline float-end">
-                                            <input class="form-check-input" type="radio" name="chainFilter" id="allChains" value="all" checked>
-                                            <label class="form-check-label" for="allChains">All</label>
-                                        </div>
-                                        <div class="form-check form-check-inline float-end">
-                                            <input class="form-check-input" type="radio" name="chainFilter" id="ethChain" value="ethereum">
-                                            <label class="form-check-label" for="ethChain">ETH</label>
-                                        </div>
-                                        <div class="form-check form-check-inline float-end">
-                                            <input class="form-check-input" type="radio" name="chainFilter" id="bscChain" value="bsc">
-                                            <label class="form-check-label" for="bscChain">BSC</label>
-                                        </div>
-                                        <div class="form-check form-check-inline float-end">
-                                            <input class="form-check-input" type="radio" name="chainFilter" id="solChain" value="solana">
-                                            <label class="form-check-label" for="solChain">SOL</label>
+                                    <div class="card-header d-flex justify-content-between align-items-center">
+                                        <h5 class="mb-0">Wallet Balances</h5>
+                                        <div id="scan-status-container" class="d-flex align-items-center">
+                                            <span class="me-2">Auto-scan:</span>
+                                            <div id="scan-status" class="fw-bold">Loading...</div>
                                         </div>
                                     </div>
                                     <div class="card-body">
+                                        <div class="d-flex justify-content-between mb-3">
+                                            <div class="btn-group" role="group" aria-label="Chain Filter">
+                                                <input type="radio" class="btn-check" name="chainFilter" id="filterAll" value="all" checked>
+                                                <label class="btn btn-outline-primary" for="filterAll">All Chains</label>
+                                                
+                                                <input type="radio" class="btn-check" name="chainFilter" id="filterEthereum" value="ethereum">
+                                                <label class="btn btn-outline-primary" for="filterEthereum">Ethereum</label>
+                                                
+                                                <input type="radio" class="btn-check" name="chainFilter" id="filterBSC" value="bsc">
+                                                <label class="btn btn-outline-primary" for="filterBSC">BSC</label>
+                                                
+                                                <input type="radio" class="btn-check" name="chainFilter" id="filterSolana" value="solana">
+                                                <label class="btn btn-outline-primary" for="filterSolana">Solana</label>
+                                            </div>
+                                            
+                                            <button class="btn btn-primary" id="scanButton">
+                                                <i class="bi bi-search"></i> Scan Now
+                                            </button>
+                                        </div>
                                         <div class="table-responsive">
                                             <table class="table table-hover" id="balanceTable">
                                                 <thead>

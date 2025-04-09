@@ -418,57 +418,89 @@ async function fetchAllWalletAddresses() {
 }
 
 // Function to update user's balances in Firestore and track deposits
-async function updateUserBalances(userId, chain, symbol, balance) {
-    if (!config.saveToFirebase || !userId || userId === 'Unknown') return;
+async function updateUserBalances(userId, balances, chain, userEmail) {
+    if (!admin || !admin.firestore || !userId) {
+        console.log(`Firebase Admin SDK not initialized or missing userId. Balances not updated for ${chain}.`);
+        return;
+    }
     
     try {
-        // Get a reference to the user's document in the users collection
-        const userDocRef = db.collection('users').doc(userId);
+        // Get a reference to the user's document
+        const userDocRef = admin.firestore().collection('users').doc(userId);
         
         // Get the current user data
         const userDoc = await userDocRef.get();
         
         if (userDoc.exists) {
             const userData = userDoc.data();
-            // Safely access current balances, creating the object if it doesn't exist
-            const balances = userData.balances || {};
+            const currentBalances = userData.balances || {};
             
-            // Normalize the symbol to check both upper and lowercase versions
-            const tokenSymbol = symbol.toUpperCase();
+            // Track if any balance changed for logging
+            let balanceUpdated = false;
+            const updatedBalances = {};
             
-            // Check if the balance field exists with either uppercase or lowercase
-            let existingKey = null;
-            let currentValue = 0;
+            // Define a threshold for detecting real balance changes
+            // This prevents updates due to minor precision differences
+            const threshold = 0.000001;
             
-            // Look for the token in any case variant
-            for (const key in balances) {
-                if (key.toUpperCase() === tokenSymbol) {
-                    existingKey = key;
-                    currentValue = balances[key] || 0;
-                    break;
+            // Process each token balance
+            for (const [token, newBalance] of Object.entries(balances)) {
+                // Skip zero balances
+                if (parseFloat(newBalance) <= threshold) {
+                    continue;
+                }
+                
+                // Standardize token symbol to uppercase
+                const tokenSymbol = token.toUpperCase();
+                
+                // Find the existing balance with case-insensitive key matching
+                let existingKey = null;
+                let currentBalance = 0;
+                
+                // Look for existing key in any case variant
+                for (const key in currentBalances) {
+                    if (key.toUpperCase() === tokenSymbol) {
+                        existingKey = key;
+                        currentBalance = parseFloat(currentBalances[key]) || 0;
+                        break;
+                    }
+                }
+                
+                // Determine the key to use for the update
+                const balanceKey = existingKey || tokenSymbol;
+                
+                // Calculate balance difference
+                const balanceDiff = parseFloat(newBalance) - currentBalance;
+                
+                // Update only if the balance has meaningfully changed
+                if (Math.abs(balanceDiff) > threshold) {
+                    updatedBalances[`balances.${balanceKey}`] = parseFloat(newBalance);
+                    balanceUpdated = true;
+                    
+                    console.log(`[${userId}] ${balanceKey} balance: ${currentBalance} → ${newBalance} (${balanceDiff > 0 ? '+' : ''}${balanceDiff.toFixed(8)})`);
+                    
+                    // If balance increased or this is a first-time balance, track it as a deposit
+                    if (balanceDiff > threshold) {
+                        // Always track when balance increases
+                        await trackBalanceIncreaseAsDeposit(
+                            userId, 
+                            chain, 
+                            balanceKey, 
+                            currentBalance, 
+                            newBalance, 
+                            balanceDiff,
+                            userEmail
+                        );
+                    }
                 }
             }
             
-            // Only update if the balance has changed beyond a small rounding threshold
-            // This prevents unnecessary updates due to small precision differences
-            const threshold = 0.000001;
-            const balanceDifference = balance - currentValue;
-            
-            if (Math.abs(balanceDifference) > threshold) {
-                // Update using the existing key if found, otherwise use the symbol as is
-                const updateKey = existingKey || tokenSymbol;
-                const updateData = {};
-                updateData[`balances.${updateKey}`] = balance;
-                
-                await userDocRef.update(updateData);
-                console.log(`Updated ${userId}'s ${updateKey} balance from ${currentValue} to ${balance}`);
-                
-                // If balance increased, track it as a deposit
-                if (balanceDifference > threshold) {
-                    await trackBalanceIncreaseAsDeposit(userId, chain, symbol, currentValue, balance, balanceDifference);
-                }
+            // Only update Firestore if at least one balance changed
+            if (balanceUpdated && Object.keys(updatedBalances).length > 0) {
+                await userDocRef.update(updatedBalances);
+                console.log(`Updated balances for user ${userId} on ${chain}`);
             } else {
-                console.log(`No change in ${userId}'s ${existingKey || tokenSymbol} balance (${balance})`);
+                console.log(`No balance changes detected for user ${userId} on ${chain}`);
             }
         } else {
             console.log(`User document ${userId} not found, cannot update balances`);
@@ -478,57 +510,63 @@ async function updateUserBalances(userId, chain, symbol, balance) {
     }
 }
 
-// Function to track a balance increase as a deposit
-async function trackBalanceIncreaseAsDeposit(userId, chain, symbol, previousBalance, newBalance, amount) {
+// Function to track balance increases as deposits
+async function trackBalanceIncreaseAsDeposit(userId, chain, token, previousBalance, newBalance, amount, userEmail) {
     try {
-        // Get user email for better identification in logs
-        let userEmail = 'Unknown';
-        
-        try {
-            const userDoc = await db.collection('users').doc(userId).get();
-            if (userDoc.exists) {
-                const userData = userDoc.data();
-                userEmail = userData.email || userData.emailAddress || userData.userEmail || 'No email found';
-                console.log(`Found user email for ${userId}: ${userEmail}`);
-            } else {
-                console.log(`User document ${userId} not found, cannot retrieve email`);
-                userEmail = `No email found for ${userId}`;
-            }
-        } catch (emailError) {
-            console.error(`Error retrieving user email:`, emailError);
-            userEmail = `Error retrieving email: ${emailError.message}`;
-        }
-        
-        // Format the deposit record
-        const deposit = {
-            userId,
-            userEmail,
-            chain,
-            symbol: symbol.toUpperCase(),
-            previousBalance,
-            newBalance,
-            amount,
-            timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            processed: false
-        };
-        
-        // Save to processed deposits collection
-        const depositRef = await db.collection('processedDeposits').add(deposit);
-        console.log(`Deposit record created with ID: ${depositRef.id}`);
-        
-        // Log the deposit
-        console.log('\n===== BALANCE INCREASE DETECTED =====');
-        console.log(`User: ${userId} (${userEmail})`);
+        console.log(`\n===== BALANCE INCREASE DETECTED =====`);
+        console.log(`User: ${userId} (${userEmail || 'No email'})`);
         console.log(`Chain: ${chain}`);
-        console.log(`Token: ${symbol.toUpperCase()}`);
+        console.log(`Token: ${token}`);
         console.log(`Previous Balance: ${previousBalance}`);
         console.log(`New Balance: ${newBalance}`);
-        console.log(`Increase Amount: ${amount}`);
-        console.log('======================================\n');
+        console.log(`Increase Amount: ${amount.toFixed(8)}`);
+        console.log(`======================================\n`);
         
+        // Get the wallet address for this user and chain
+        let walletAddress = 'N/A';
+        try {
+            const userDoc = await admin.firestore().collection('walletAddresses').doc(userId).get();
+            if (userDoc.exists) {
+                const walletData = userDoc.data();
+                if (walletData && walletData.wallets) {
+                    if (chain === 'Ethereum') {
+                        walletAddress = walletData.wallets.ethereum || 'N/A';
+                    } else if (chain === 'BSC') {
+                        walletAddress = walletData.wallets.bsc || 'N/A';
+                    } else if (chain === 'Solana') {
+                        walletAddress = walletData.wallets.solana || 'N/A';
+                    }
+                }
+            }
+        } catch (walletError) {
+            console.warn(`Could not retrieve wallet address: ${walletError.message}`);
+        }
+        
+        // Create a new entry in the processedDeposits collection
+        const depositData = {
+            userId,
+            userEmail: userEmail || null,
+            chain,
+            walletAddress: walletAddress,
+            amount: amount,
+            previousBalance: previousBalance,
+            newBalance: newBalance,
+            token: token,
+            txHash: null, // No transaction hash since this is detected via balance change
+            detectedBy: 'balance-scanner',
+            processed: true,
+            detectedAt: admin.firestore.FieldValue.serverTimestamp(),
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            type: 'balance-increase'
+        };
+        
+        const depositRef = await admin.firestore().collection('processedDeposits').add(depositData);
+        
+        console.log(`Deposit recorded successfully with ID: ${depositRef.id}`);
         return depositRef.id;
     } catch (error) {
-        console.error('Error tracking balance increase as deposit:', error);
+        console.error('Error logging deposit from balance increase:', error);
         return null;
     }
 }
@@ -576,7 +614,7 @@ async function processBatch(addresses, chain, web3Instance, userMap, emailMap, s
             
             // Update user's SOL balance in users collection
             if (nativeBalance > 0) {
-                await updateUserBalances(userId, chain, 'SOL', nativeBalance);
+                await updateUserBalances(userId, { SOL: nativeBalance }, chain, userEmail);
             }
             
             // Check SPL token balances if there's a SOL balance
@@ -585,7 +623,7 @@ async function processBatch(addresses, chain, web3Instance, userMap, emailMap, s
                 
                 // Update user's token balances in users collection
                 for (const [symbol, tokenData] of Object.entries(tokenBalances)) {
-                    await updateUserBalances(userId, chain, symbol, tokenData.balance);
+                    await updateUserBalances(userId, { [symbol]: tokenData.balance }, chain, userEmail);
                 }
             }
         } else if (chain === 'Ethereum') {
@@ -593,7 +631,7 @@ async function processBatch(addresses, chain, web3Instance, userMap, emailMap, s
             
             // Update user's ETH balance in users collection
             if (nativeBalance > 0) {
-                await updateUserBalances(userId, chain, 'ETH', nativeBalance);
+                await updateUserBalances(userId, { ETH: nativeBalance }, chain, userEmail);
             }
             
             // Skip detailed checks if balance is below minimum reporting threshold
@@ -611,7 +649,7 @@ async function processBatch(addresses, chain, web3Instance, userMap, emailMap, s
                         };
                         
                         // Update user's token balance in users collection
-                        await updateUserBalances(userId, chain, token.symbol, balance);
+                        await updateUserBalances(userId, { [token.symbol]: balance }, chain, userEmail);
                     }
                 }
             }
@@ -620,7 +658,7 @@ async function processBatch(addresses, chain, web3Instance, userMap, emailMap, s
             
             // Update user's BNB balance in users collection
             if (nativeBalance > 0) {
-                await updateUserBalances(userId, chain, 'BNB', nativeBalance);
+                await updateUserBalances(userId, { BNB: nativeBalance }, chain, userEmail);
             }
             
             // Skip detailed checks if balance is below minimum reporting threshold
@@ -638,7 +676,7 @@ async function processBatch(addresses, chain, web3Instance, userMap, emailMap, s
                         };
                         
                         // Update user's token balance in users collection
-                        await updateUserBalances(userId, chain, token.symbol, balance);
+                        await updateUserBalances(userId, { [token.symbol]: balance }, chain, userEmail);
                     }
                 }
             }

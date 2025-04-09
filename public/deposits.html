@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DepoScan - Deposit History</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/moment@2.29.4/moment.min.js"></script>
+    <link rel="stylesheet" href="css/styles.css">
+    <style>
+        .table-card {
+            border: none;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        .card-header {
+            background-color: #f8f9fa;
+            border-bottom: none;
+            padding: 1rem;
+        }
+        .search-container {
+            margin-bottom: 15px;
+        }
+        .no-data-message {
+            padding: 20px;
+            text-align: center;
+            font-style: italic;
+            color: #6c757d;
+        }
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(255, 255, 255, 0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            border-radius: .25rem;
+        }
+        .badge-chain {
+            font-size: 0.75rem;
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">DepoScan</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/"><i class="bi bi-speedometer2"></i> Dashboard</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" href="/deposits.html"><i class="bi bi-currency-exchange"></i> Deposit History</a>
+                    </li>
+                </ul>
+                <div class="navbar-text me-3 text-light">
+                    <i class="bi bi-person-circle"></i> <span id="userEmail">Loading user...</span>
+                </div>
+                <button class="btn btn-outline-light btn-sm" onclick="window.authFunctions.logout()">
+                    <i class="bi bi-box-arrow-right"></i> Logout
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <div class="card table-card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-currency-exchange"></i> Deposit History</h5>
+                <button id="refreshBtn" class="btn btn-sm btn-outline-secondary">
+                    <i class="bi bi-arrow-repeat"></i> Refresh
+                </button>
+            </div>
+            <div class="card-body">
+                <div class="search-container">
+                    <div class="row">
+                        <div class="col-md-6 mb-2">
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="bi bi-envelope"></i></span>
+                                <input type="text" id="emailSearch" class="form-control" placeholder="Search by user email...">
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="bi bi-wallet2"></i></span>
+                                <input type="text" id="walletSearch" class="form-control" placeholder="Search by wallet address...">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="d-flex justify-content-end">
+                        <button id="searchBtn" class="btn btn-primary me-2">
+                            <i class="bi bi-search"></i> Search
+                        </button>
+                        <button id="clearSearchBtn" class="btn btn-secondary">
+                            <i class="bi bi-x-circle"></i> Clear
+                        </button>
+                    </div>
+                </div>
+
+                <div class="table-responsive position-relative">
+                    <div id="loadingOverlay" class="loading-overlay">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                    </div>
+                    <table class="table table-striped table-hover">
+                        <thead>
+                            <tr>
+                                <th>Date/Time</th>
+                                <th>User</th>
+                                <th>Chain</th>
+                                <th>Token</th>
+                                <th>Amount</th>
+                                <th>New Balance</th>
+                                <th>Transaction</th>
+                            </tr>
+                        </thead>
+                        <tbody id="depositsTableBody">
+                            <!-- Deposit data will be loaded here -->
+                        </tbody>
+                    </table>
+                    <div id="noDataMessage" class="no-data-message" style="display: none;">
+                        No deposit history found
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    <script src="js/auth.js"></script>
+    <script>
+        // Authentication check
+        window.authFunctions.checkAuth().then(user => {
+            document.getElementById('userEmail').textContent = user.email || 'User';
+        }).catch(error => {
+            console.error('Auth check failed:', error);
+        });
+
+        // Elements
+        const depositsTableBody = document.getElementById('depositsTableBody');
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        const noDataMessage = document.getElementById('noDataMessage');
+        const refreshBtn = document.getElementById('refreshBtn');
+        const emailSearch = document.getElementById('emailSearch');
+        const walletSearch = document.getElementById('walletSearch');
+        const searchBtn = document.getElementById('searchBtn');
+        const clearSearchBtn = document.getElementById('clearSearchBtn');
+
+        // Function to format token symbol based on chain
+        function getTokenSymbol(chain) {
+            if (chain === 'Ethereum') return 'ETH';
+            if (chain === 'BSC') return 'BNB';
+            if (chain === 'Solana') return 'SOL';
+            return chain;
+        }
+
+        // Function to format transaction hash for display
+        function formatTxHash(hash, chain) {
+            if (!hash) return 'N/A';
+            
+            const shortHash = hash.substring(0, 8) + '...' + hash.substring(hash.length - 8);
+            let explorerUrl = '#';
+            
+            if (chain === 'Ethereum') {
+                explorerUrl = `https://etherscan.io/tx/${hash}`;
+            } else if (chain === 'BSC') {
+                explorerUrl = `https://bscscan.com/tx/${hash}`;
+            } else if (chain === 'Solana') {
+                explorerUrl = `https://explorer.solana.com/tx/${hash}`;
+            }
+            
+            return `<a href="${explorerUrl}" target="_blank" title="${hash}">${shortHash}</a>`;
+        }
+
+        // Function to fetch deposit history with optional filters
+        async function fetchDepositHistory(filters = {}) {
+            try {
+                loadingOverlay.style.display = 'flex';
+                noDataMessage.style.display = 'none';
+                
+                // Build query parameters
+                const params = new URLSearchParams();
+                if (filters.email) params.append('email', filters.email);
+                if (filters.wallet) params.append('wallet', filters.wallet);
+                
+                const queryString = params.toString() ? `?${params.toString()}` : '';
+                const response = await fetch(`/api/deposit-history${queryString}`);
+                
+                if (!response.ok) {
+                    throw new Error(`Server returned ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                if (data.success && data.deposits.length > 0) {
+                    updateDepositsTable(data.deposits);
+                    noDataMessage.style.display = 'none';
+                } else {
+                    depositsTableBody.innerHTML = '';
+                    noDataMessage.style.display = 'block';
+                }
+            } catch (error) {
+                console.error('Error fetching deposit history:', error);
+                depositsTableBody.innerHTML = '';
+                noDataMessage.textContent = `Error loading data: ${error.message}`;
+                noDataMessage.style.display = 'block';
+            } finally {
+                loadingOverlay.style.display = 'none';
+            }
+        }
+
+        // Function to update the deposits table
+        function updateDepositsTable(deposits) {
+            depositsTableBody.innerHTML = '';
+            
+            deposits.forEach(deposit => {
+                const row = document.createElement('tr');
+                
+                // Format timestamp
+                const timestamp = deposit.timestamp ? 
+                    moment(deposit.timestamp).format('YYYY-MM-DD HH:mm:ss') : 
+                    'N/A';
+                
+                // Format amount with 6 decimal places
+                const amount = parseFloat(deposit.amount).toFixed(6);
+                
+                // Format new balance with 6 decimal places
+                const newBalance = deposit.newBalance ? 
+                    parseFloat(deposit.newBalance).toFixed(6) : 
+                    'N/A';
+                
+                // Get token symbol based on chain or use the token field if available
+                const token = deposit.token || getTokenSymbol(deposit.chain);
+                
+                // Create chain badge
+                let chainBadgeClass = 'bg-secondary';
+                if (deposit.chain === 'Ethereum') chainBadgeClass = 'bg-primary';
+                if (deposit.chain === 'BSC') chainBadgeClass = 'bg-warning text-dark';
+                if (deposit.chain === 'Solana') chainBadgeClass = 'bg-info text-dark';
+                
+                const chainBadge = `<span class="badge ${chainBadgeClass} badge-chain">${deposit.chain}</span>`;
+                
+                // Create deposit type badge if available
+                let typeDisplay = '';
+                if (deposit.type === 'balance-increase') {
+                    typeDisplay = `<span class="badge bg-success ms-1" title="Detected via balance change">Balance Change</span>`;
+                }
+                
+                row.innerHTML = `
+                    <td>${timestamp}</td>
+                    <td>${deposit.userEmail || deposit.userId || 'Unknown'}</td>
+                    <td>${chainBadge} ${typeDisplay}</td>
+                    <td>${token}</td>
+                    <td>${amount}</td>
+                    <td>${newBalance}</td>
+                    <td>${formatTxHash(deposit.txHash, deposit.chain) || 'N/A'}</td>
+                `;
+                
+                depositsTableBody.appendChild(row);
+            });
+        }
+
+        // Event listeners
+        refreshBtn.addEventListener('click', () => {
+            fetchDepositHistory({
+                email: emailSearch.value.trim(),
+                wallet: walletSearch.value.trim()
+            });
+        });
+
+        searchBtn.addEventListener('click', () => {
+            fetchDepositHistory({
+                email: emailSearch.value.trim(),
+                wallet: walletSearch.value.trim()
+            });
+        });
+
+        clearSearchBtn.addEventListener('click', () => {
+            emailSearch.value = '';
+            walletSearch.value = '';
+            fetchDepositHistory();
+        });
+
+        // Handle enter key in search inputs
+        emailSearch.addEventListener('keyup', (event) => {
+            if (event.key === 'Enter') searchBtn.click();
+        });
+
+        walletSearch.addEventListener('keyup', (event) => {
+            if (event.key === 'Enter') searchBtn.click();
+        });
+
+        // Initial load
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchDepositHistory();
+        });
+    </script>
+</body>
+</html> 
